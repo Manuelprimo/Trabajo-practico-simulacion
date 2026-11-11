@@ -1,0 +1,218 @@
+---
+format:
+  pdf:
+    pdf-engine: xelatex
+    geometry:
+      - top=12.7mm
+      - bottom=12.7mm
+      - left=12.7mm
+      - right=12.7mm
+---
+
+```{r}
+#| include: false
+# Librerias
+
+library(nortest)
+library(tseries)
+library(kableExtra)
+
+# seteo semilla para reproducibilidad de los datos
+set.seed(23)
+```
+
+Existe una gran variedad de test de bondad de ajuste para probar si un conjunto de datos proviene de una distribución normal. Se piensa que el comportamiento de estas pruebas puede ser diferente según el tamaño de la muestra que se evalúa y también debido a la simetría y la curtosis de la verdadera distribución de los datos. Se desea comparar mediante simulación el comportamiento de seis test de hipótesis para probar normalidad en términos de la probabilidad de error tipo I y la potencia. Los test a comparar junto con la función sugerida para realizar cada prueba en R se listan en la siguiente tabla:
+
+| Test de normalidad | Función sugerida              |
+|:-------------------|:------------------------------|
+| Kolmogorov-Smirnov | `stats::ks.test()`            |
+| Lilliefors         | `nortest::lillie.test()`      |
+| Shapiro-Wilks      | `stats::shapiro.test()`       |
+| Anderson-Darling   | `nortest::ad.test()`          |
+| Jarque-Bera        | `tseries::jarque.bera.test()` |
+| Cramer-Von Mises   | `nortest::cvm.test()`         |
+
+## Diseño
+
+Para realizar el estudio se construyen tres funciones las cuales, a partir del tamaño muestral y del test de interés, evalúan y devuelven la decisión acerca de si la muestra sigue una distribución Normal o no. Cada función corresponde a una distribución muestral de partida: Normal estándar, t de Student con 2 grados de libertad o chi-cuadrado con 3 grados de libertad.
+
+```{r}
+#| include: false
+realizar_test_N <- function(n, test) {
+  x <- rnorm(n)
+  resultado <- switch(test,
+                      ks       = stats::ks.test(x, "pnorm"),
+                      lili     = nortest::lillie.test(x),
+                      shapiro  = stats::shapiro.test(x),
+                      anderson = nortest::ad.test(x),
+                      jb       = tseries::jarque.bera.test(x),
+                      cvm      = nortest::cvm.test(x),
+                      stop("Test no reconocido: ", test)
+  )
+  resultado$p.value <= 0.05
+}
+
+
+realizar_test_T <- function(n, test) {
+  x <- rt(n,2)
+  resultado <- switch(test,
+                      ks       = stats::ks.test(x, "pnorm"),
+                      lili     = nortest::lillie.test(x),
+                      shapiro  = stats::shapiro.test(x),
+                      anderson = nortest::ad.test(x),
+                      jb       = tseries::jarque.bera.test(x),
+                      cvm      = nortest::cvm.test(x),
+                      stop("Test no reconocido: ", test)
+  )
+  resultado$p.value <= 0.05
+}
+
+
+realizar_test_Chi <- function(n, test) {
+  x <- rchisq(n,3)
+  resultado <- switch(test,
+                      ks       = stats::ks.test(x, "pnorm", mean = 3, sd = sqrt(6)),
+                      lili     = nortest::lillie.test(x),
+                      shapiro  = stats::shapiro.test(x),
+                      anderson = nortest::ad.test(x),
+                      jb       = tseries::jarque.bera.test(x),
+                      cvm      = nortest::cvm.test(x),
+                      stop("Test no reconocido: ", test)
+  )
+  resultado$p.value <= 0.05
+}
+```
+
+Una vez construidas las funciones, se realizan las diferentes pruebas para cada una de las combinaciones entre los test anteriormente mencionados y los tamaños muestrales de $25,\ 50,\ 100 \ y \ 500$. Cada una de estas combinaciones se repite 1000 veces para poder obtener, además de estimaciones puntuales, medidas de error de dichas estimaciones.
+
+Cuando se esta trabajando con una distribución de partida Normal estándar, se toma a la Probabilidad de error de tipo I ($P(e_I) = \alpha$) como medida de comparación entre las precisiones de cada uno de los test. Es decir, interesa la proporción de veces que los test devolvieron que la distribución no era normal, cuando en realidad se sabe que sí lo es (Normal estándar).
+
+En cambio, cuando la distribución de partida es t de Student o chi-cuadrado, la precisión se evalúa a partir de la potencia de los test ($1 - \beta$). Se tiene en cuenta la proporción de veces que cada test detectó correctamente que la distribución de la muestra estudiada no era normal.
+
+```{r}
+#| include: false
+tamaños <- c(25, 50, 100, 500)
+tests   <- c("ks", "lili", "shapiro", "anderson", "jb", "cvm")
+B <- 1000
+
+filas <- list()
+
+# Poblacion Normal, buscamos estimar la P(eI)
+
+resultados_N <- expand.grid(
+  n    = c(25, 50, 100, 500),
+  test = c("ks", "lili", "shapiro", "anderson", "jb", "cvm"),
+  stringsAsFactors = FALSE
+)
+
+resultados_N$proporcion <- NA
+resultados_N$error      <- NA
+
+for (i in seq_len(nrow(resultados_N))) {
+  x <- replicate(1000, realizar_test_N(resultados_N$n[i], resultados_N$test[i]))
+  resultados_N$proporcion[i] <- mean(x)
+  resultados_N$error[i]      <- sd(x) / sqrt(1000)
+}
+
+resultados_N
+
+# Poblacion T, buscamos la potencia del test (1 - beta)
+
+resultados_T <- expand.grid(
+  n    = c(25, 50, 100, 500),
+  test = c("ks", "lili", "shapiro", "anderson", "jb", "cvm"),
+  stringsAsFactors = FALSE
+)
+
+resultados_T$proporcion <- NA
+resultados_T$error      <- NA
+
+for (i in seq_len(nrow(resultados_T))) {
+  x <- replicate(1000, realizar_test_T(resultados_T$n[i], resultados_T$test[i]))
+  resultados_T$proporcion[i] <- mean(x)
+  resultados_T$error[i]      <- sd(x) / sqrt(1000)
+}
+
+resultados_T
+
+
+# Poblacion Chi, buscamos la potencia del test (1 - beta)
+
+resultados_Chi <- expand.grid(
+  n    = c(25, 50, 100, 500),
+  test = c("ks", "lili", "shapiro", "anderson", "jb", "cvm"),
+  stringsAsFactors = FALSE
+)
+
+resultados_Chi$proporcion <- NA
+resultados_Chi$error      <- NA
+
+for (i in seq_len(nrow(resultados_Chi))) {
+  x <- replicate(1000, realizar_test_Chi(resultados_Chi$n[i], resultados_Chi$test[i]))
+  resultados_Chi$proporcion[i] <- mean(x)
+  resultados_Chi$error[i]      <- sd(x) / sqrt(1000)
+}
+
+resultados_Chi
+```
+
+\newpage
+
+## Resultados
+
+A partir de los resultados obtenidos, se realiza una tabla donde se pueden observar las diferentes proporciones de interés para cada una de las combinaciones entre test y tamaño muestral.
+
+```{r}
+#| echo: false
+# Presentar los resultados en una tabla (ayudado por claude)
+
+
+# 1. Identificar cada población y unir
+resultados_N$poblacion   <- "Normal"
+resultados_T$poblacion   <- "t"
+resultados_Chi$poblacion <- "Chi"
+
+resultados <- rbind(resultados_N, resultados_T, resultados_Chi)
+
+# 2. Celda con formato "proporción (error)"
+resultados$celda <- sprintf("%.3f (%.3f)", resultados$proporcion, resultados$error)
+
+# 3. Pasar a formato ancho: una fila por población y n, una columna por test
+ancho <- reshape(resultados[, c("poblacion", "n", "test", "celda")],
+                 idvar = c("poblacion", "n"), timevar = "test",
+                 direction = "wide")
+names(ancho) <- sub("celda.", "", names(ancho), fixed = TRUE)
+
+# 4. Ordenar filas y columnas
+tests <- c("ks", "lili", "shapiro", "anderson", "jb", "cvm")
+ancho$poblacion <- factor(ancho$poblacion, levels = c("Normal", "t", "Chi"))
+ancho <- ancho[order(ancho$poblacion, ancho$n), c("poblacion", "n", tests)]
+
+# 5. Tabla
+kbl(ancho[, -1],
+    row.names = FALSE,
+    align     = "c",
+    col.names = c("n", "KS", "Lilliefors", "Shapiro-Wilk",
+                  "Anderson-Darling", "Jarque-Bera", "Cramér-von Mises"),
+    caption   = "Proporción de rechazos de H0 según población, tamaño muestral y test") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE,
+                latex_options = "hold_position") |>
+  add_header_above(c(" " = 1, "Test de normalidad" = 6)) |>
+  pack_rows(index = c("Población Normal: P(error tipo I)"        = 4,
+                      "Población t: potencia"                    = 4,
+                      "Población Chi-cuadrado: potencia"         = 4)) |>
+  footnote(general = "alpha = 0.05, 1000 réplicas por combinación. Entre paréntesis, el error estándar de estimación.")
+
+```
+
+# Conclusiones
+
+Analizando la tabla 1, se puede detectar lo siguiente:
+
+- Cuando la muestra es Normal, la precisión resulta similar en cada  uno de los test. La probabilidad de error de tipo I está cerca de $0,05$ en todos los casos.
+- Shapiro-Wilk resulta ser el test más potente y robusto para detectar la falta de normalidad.
+- Anderson-Darling y Cramér-von Mises ofrecen un buen comportamiento general.
+- Jarque-Bera pierde precisión en muestras pequeñas ($n < 50$), aunque resulta efectivo para $n > 100$.
+- Kolmogorov-Smirnov resulta poco preciso. Se recomienda la utilización de Lilliefors en su lugar.
+- Se puede observar que cuando $n > 100$, las potencias de todos los test son aproximadamente 1 $( 1 - \beta \simeq 1)$.
